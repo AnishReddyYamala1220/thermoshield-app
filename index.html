@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ThermoShield AI - Solar & Infrastructure Navigation</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; display: flex; height: 100vh; background: #121214; color: #ececee; }
+        #sidebar { width: 380px; background: #18181b; border-right: 1px solid #27272a; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+        #map { flex: 1; height: 100%; cursor: crosshair; }
+        h2 { margin: 0; color: #38bdf8; font-size: 1.4rem; }
+        select, input[type="range"], button { background: #27272a; border: 1px solid #3f3f46; color: white; padding: 10px; font-weight: 600; border-radius: 6px; cursor: pointer; width: 100%; box-sizing: border-box; }
+        button.reset-btn { background: #3f3f46; border: none; }
+        button.reset-btn:hover { background: #52525b; }
+        .card { background: #27272a; padding: 14px; border-radius: 8px; font-size: 0.9rem; }
+        .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+        .metric-box { background: #18181b; padding: 8px; border-radius: 6px; text-align: center; }
+        .metric-box span { display: block; font-size: 1.1rem; font-weight: bold; color: #38bdf8; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; background: #ef4444; color: white; }
+        .legend { background: #18181b; padding: 10px; border-radius: 6px; font-size: 0.8rem; display: flex; gap: 8px; align-items: center; justify-content: space-around; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+        .status-box { background: #0284c71a; border: 1px solid #0284c7; padding: 10px; border-radius: 6px; font-size: 0.82rem; color: #38bdf8; line-height: 1.4; }
+        .point-item { display: flex; justify-content: space-between; align-items: center; background: #18181b; padding: 6px 10px; margin-top: 6px; border-radius: 4px; font-size: 0.8rem; }
+        .remove-btn { color: #ef4444; cursor: pointer; font-weight: bold; }
+        
+        /* Tooltip styling for hover coordinate inspection */
+        .custom-tooltip {
+            background-color: #18181b;
+            border: 1px solid #38bdf8;
+            color: #ececee;
+            font-family: monospace;
+            font-size: 0.82rem;
+            border-radius: 4px;
+            padding: 6px 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <h2>ThermoShield AI</h2>
+    <p style="font-size:0.82rem; color:#a1a1aa; margin:0;">Solar & Infrastructure Pathfinder with FortyGuard Microclimate Mesh.</p>
+    
+    <div>
+        <label style="font-size:0.8rem; color:#a1a1aa; display:block; margin-bottom:4px;">USER PROFILE:</label>
+        <select id="user-profile" onchange="processMultiPointRouting()">
+            <option value="STANDARD">Standard Adult (35°C limit)</option>
+            <option value="WORKER">Outdoor Worker (32°C limit)</option>
+            <option value="ELDERLY">Elderly / Vulnerable (31°C limit)</option>
+            <option value="ATHLETE">Athlete / Runner (37°C limit)</option>
+            <option value="CHILD">Child / Pedestrian (33°C limit)</option>
+        </select>
+    </div>
+
+    <div>
+        <label style="font-size:0.8rem; color:#a1a1aa; display:block; margin-bottom:4px;">SOLAR TIME OF DAY: <span id="time-val" style="color:#38bdf8; font-weight:bold;">14:00</span></label>
+        <input type="range" id="solar-hour" min="6" max="20" value="14" step="1" oninput="updateTimeLabel(this.value)" onchange="processMultiPointRouting()">
+    </div>
+
+    <div id="instruction-box" class="status-box">
+        📍 Click map to add waypoints.<br><small style="color:#a1a1aa;">Hover over markers to view precise coordinates.</small>
+    </div>
+
+    <button onclick="clearAllPoints()" class="reset-btn">Clear All Waypoints</button>
+    
+    <div class="legend">
+        <div><span class="dot" style="background:#ef4444;"></span> >39°C Hotspot</div>
+        <div><span class="dot" style="background:#fbbf24;"></span> 35-38°C Moderate</div>
+        <div><span class="dot" style="background:#059669;"></span> Cool Corridor</div>
+    </div>
+
+    <div id="points-list-container" class="card" style="display:none;">
+        <strong>Active Route Waypoints</strong>
+        <div id="points-list"></div>
+    </div>
+
+    <div id="analytics" style="display:none;" class="card">
+        <div style="display:flex; justify-content: space-between; align-items:center;">
+            <strong>Thermal Analytics</strong>
+            <span id="risk-badge" class="badge">HIGH</span>
+        </div>
+        <div class="metric-grid">
+            <div class="metric-box">Avg Temp<span id="avg-temp">--</span></div>
+            <div class="metric-box">Peak Temp<span id="peak-temp">--</span></div>
+            <div class="metric-box">Stress Reduced<span id="saved-temp" style="color:#34d399;">--</span></div>
+            <div class="metric-box">Exceeded Spots<span id="hotspots">--</span></div>
+        </div>
+    </div>
+
+    <div id="health-card" style="display:none;" class="card">
+        <strong>Safety & Hydration Advisory</strong>
+        <div class="metric-grid" style="margin-top:8px;">
+            <div class="metric-box">Max Exposure<span id="safe-time" style="color:#fbbf24;">--</span></div>
+            <div class="metric-box">Target Water<span id="water-rec">--</span></div>
+        </div>
+        <p id="summary-text" style="font-size:0.8rem; color:#d4d4d8; margin-top:10px; line-height:1.4;"></p>
+    </div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const map = L.map('map').setView([33.4484, -112.0740], 15);
+    
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let waypoints = [];
+    let routeLayers = [];
+
+    function updateTimeLabel(val) {
+        document.getElementById('time-val').innerText = `${val.padStart(2, '0')}:00`;
+    }
+
+    function getMarkerIcon(index, total) {
+        let color = "blue";
+        if (index === 0) color = "green";
+        else if (index === total - 1) color = "red";
+        
+        return new L.Icon({
+            iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+        });
+    }
+
+    map.on('click', function(e) {
+        const pointId = Date.now() + Math.random();
+        const lat = e.latlng.lat;
+        const lon = e.latlng.lng;
+
+        const marker = L.marker([lat, lon]).addTo(map);
+        marker.on('click', function() { removePoint(pointId); });
+
+        waypoints.push({ id: pointId, lon, lat, marker });
+        refreshWaypointsUI();
+        processMultiPointRouting();
+    });
+
+    function removePoint(pointId) {
+        const index = waypoints.findIndex(pt => pt.id === pointId);
+        if (index !== -1) {
+            map.removeLayer(waypoints[index].marker);
+            waypoints.splice(index, 1);
+            refreshWaypointsUI();
+            processMultiPointRouting();
+        }
+    }
+
+    function clearAllPoints() {
+        waypoints.forEach(pt => map.removeLayer(pt.marker));
+        waypoints = [];
+        clearRouteLayers();
+        refreshWaypointsUI();
+        document.getElementById('analytics').style.display = 'none';
+        document.getElementById('health-card').style.display = 'none';
+    }
+
+    function refreshWaypointsUI() {
+        const container = document.getElementById('points-list-container');
+        const list = document.getElementById('points-list');
+        list.innerHTML = '';
+
+        if (waypoints.length === 0) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'block';
+        waypoints.forEach((pt, idx) => {
+            pt.marker.setIcon(getMarkerIcon(idx, waypoints.length));
+            let label = idx === 0 ? "Start Point" : (idx === waypoints.length - 1 ? "End Point" : `Stop ${idx}`);
+            
+            // Mouse Hover Tooltip with Point Name & Coordinates
+            const tooltipContent = `<b>${label}</b><br>Lat: ${pt.lat.toFixed(5)}<br>Lon: ${pt.lon.toFixed(5)}`;
+            pt.marker.unbindTooltip();
+            pt.marker.bindTooltip(tooltipContent, {
+                permanent: false,
+                direction: 'top',
+                className: 'custom-tooltip',
+                offset: [0, -35]
+            });
+
+            const div = document.createElement('div');
+            div.className = 'point-item';
+            div.innerHTML = `
+                <span><b>${label}:</b> ${pt.lat.toFixed(4)}, ${pt.lon.toFixed(4)}</span>
+                <span class="remove-btn" onclick="removePoint(${pt.id})">✖</span>
+            `;
+            list.appendChild(div);
+        });
+    }
+
+    function clearRouteLayers() {
+        routeLayers.forEach(layer => map.removeLayer(layer));
+        routeLayers = [];
+    }
+
+    async function processMultiPointRouting() {
+        clearRouteLayers();
+
+        if (waypoints.length < 2) return;
+
+        const userProfile = document.getElementById('user-profile').value;
+        const hourOfDay = parseInt(document.getElementById('solar-hour').value);
+
+        let combinedCoolPath = [];
+        let combinedDirectPath = [];
+        let fullHeatGrid = { type: "FeatureCollection", features: [] };
+        let lastAnalytics = null;
+
+        for (let i = 0; i < waypoints.length - 1; i++) {
+            const origin = [waypoints[i].lon, waypoints[i].lat];
+            const destination = [waypoints[i+1].lon, waypoints[i+1].lat];
+
+            const res = await fetch('/api/plan-route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    origin, 
+                    destination, 
+                    user_profile: userProfile,
+                    hour_of_day: hourOfDay 
+                })
+            });
+            const data = await res.json();
+
+            fullHeatGrid.features.push(...(data.heat_grid.features || []));
+            
+            // Add Infrastructure Icons (Drinking Fountains & Cooling Shelters)
+            (data.infrastructure || []).forEach(stn => {
+                const iconSymbol = stn.type === 'fountain' ? '🚰' : '❄️';
+                const infraMarker = L.marker([stn.lat, stn.lon], {
+                    icon: L.divIcon({
+                        className: 'infra-icon',
+                        html: `<div style="font-size: 18px;">${iconSymbol}</div>`,
+                        iconSize: [24, 24]
+                    })
+                }).addTo(map).bindTooltip(`<b>${stn.name}</b>`, { className: 'custom-tooltip' });
+                routeLayers.push(infraMarker);
+            });
+
+            if (combinedCoolPath.length > 0) {
+                combinedCoolPath.push(...data.cool_path.slice(1));
+                combinedDirectPath.push(...data.direct_path.slice(1));
+            } else {
+                combinedCoolPath.push(...data.cool_path);
+                combinedDirectPath.push(...data.direct_path);
+            }
+            lastAnalytics = data.analytics;
+        }
+
+        const heatLayer = L.geoJSON(fullHeatGrid, {
+            style: function(f) {
+                const temp = f.properties.temperature;
+                const color = temp > 39.5 ? '#ef4444' : temp > 36.5 ? '#fbbf24' : '#059669';
+                return { color: color, weight: 0.5, fillOpacity: 0.45 };
+            }
+        }).addTo(map);
+        routeLayers.push(heatLayer);
+
+        const directPoly = L.polyline(combinedDirectPath, { color: '#ef4444', dashArray: '6, 8', weight: 3 }).addTo(map);
+        routeLayers.push(directPoly);
+
+        const coolPoly = L.polyline(combinedCoolPath, { color: '#059669', weight: 5 }).addTo(map);
+        routeLayers.push(coolPoly);
+
+        document.getElementById('analytics').style.display = 'block';
+        document.getElementById('health-card').style.display = 'block';
+        
+        document.getElementById('risk-badge').innerText = lastAnalytics.risk_level;
+        document.getElementById('avg-temp').innerText = lastAnalytics.ambient_avg_temp;
+        document.getElementById('peak-temp').innerText = lastAnalytics.peak_microclimate_temp;
+        document.getElementById('saved-temp').innerText = lastAnalytics.thermal_exposure_reduced;
+        document.getElementById('hotspots').innerText = lastAnalytics.heat_islands_avoided;
+        
+        document.getElementById('safe-time').innerText = lastAnalytics.safe_exposure_limit;
+        document.getElementById('water-rec').innerText = lastAnalytics.recommended_hydration;
+        document.getElementById('summary-text').innerText = lastAnalytics.summary;
+    }
+</script>
+</body>
+</html>
